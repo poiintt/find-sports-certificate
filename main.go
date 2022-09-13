@@ -4,85 +4,106 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/joho/godotenv"
 	"github.com/ledongthuc/pdf"
-)
-
-var (
-	fileName string
-	pdfUrl   string
+	"github.com/unidoc/unipdf/v3/model"
+	"golang.org/x/net/html/charset"
 )
 
 func main() {
 	err := godotenv.Load(".env")
-
 	if err != nil {
-		log.Fatalf("Error loading .env file")
+		log.Fatal("Error loading .env file")
 	}
 
-	pdfUrl = os.Getenv("URL")
+	downloadPdfs(1, 10)
+}
+
+func downloadPdfs(start int, end int) {
+	pdfUrl := os.Getenv("URL")
 	fileURL, err := url.Parse(pdfUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
-	values := fileURL.Query()
+	urlValues := fileURL.Query()
 
-	for i := 1; i <= 10; i++ {
+	pdfFolder := "./pdfs/"
+
+	for i := start; i <= end; i++ {
 		start := time.Now()
 
-		values.Set("ID", strconv.Itoa(i))
-		fileURL.RawQuery = values.Encode()
-		fmt.Printf("%s", fileURL.String())
-		fmt.Println()
+		fileName := strconv.Itoa(i) + ".pdf"
+		file, _ := os.Open(pdfFolder + fileName)
 
-		fileName = strconv.Itoa(i) + ".pdf"
-		client := http.Client{
-			CheckRedirect: func(r *http.Request, via []*http.Request) error {
-				r.URL.Opaque = r.URL.Path
-				return nil
-			},
-		}
-		// Put content on file
-		resp, err := client.Get(fileURL.String())
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer resp.Body.Close()
+		fmt.Printf("%d: ", i)
 
-		// Create empty file
-		file, err := os.Create("./pdfs/" + fileName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		size, err := io.Copy(file, resp.Body)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer file.Close()
+		// skip downloaded files
+		if file != nil {
+			fmt.Printf("Skipping")
+		} else {
+			urlValues.Set("ID", strconv.Itoa(i))
+			fileURL.RawQuery = urlValues.Encode()
 
-		content, err := readPdf("./pdfs/" + fileName)
+			client := http.Client{
+				CheckRedirect: func(r *http.Request, via []*http.Request) error {
+					r.URL.Opaque = r.URL.Path
+					return nil
+				},
+			}
+
+			resp, err := client.Get(fileURL.String())
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer resp.Body.Close()
+
+			// create empty file
+			file, err := os.Create(pdfFolder + fileName)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			size, err := io.Copy(file, resp.Body)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer file.Close()
+
+			fileSize := units.HumanSize(float64(size))
+			fmt.Printf("Downloaded (%s)", fileSize)
+		}
+
+		content, err := getPdfContent(pdfFolder + fileName)
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(content)
 
-		humanSize := units.HumanSize(float64(size))
+		subject, err := getPdfSubject(file)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println()
+		fmt.Println("subject: ", subject)
+		fmt.Println("content: ", content)
 
 		duration := time.Since(start)
-		fmt.Printf("Downloaded '%s' with size %s in %s", fileName, humanSize, duration)
+		fmt.Printf(" in %s", duration)
 		fmt.Println()
 	}
 }
 
-func readPdf(path string) (string, error) {
+func getPdfContent(path string) (string, error) {
 	_, r, err := pdf.Open(path)
 	if err != nil {
 		return "", err
@@ -99,4 +120,23 @@ func readPdf(path string) (string, error) {
 		textBuilder.WriteString(s)
 	}
 	return textBuilder.String(), nil
+}
+
+func getPdfSubject(file *os.File) (string, error) {
+	pdfReader, _ := model.NewPdfReader(file)
+
+	pdfInfo, _ := pdfReader.GetPdfInfo()
+	subject := pdfInfo.Subject.String()
+	subject = strings.Replace(subject, "Urkunde ", "", 1)
+	subject = convertToUTF8(subject, "ascii")
+
+	return subject, nil
+}
+
+func convertToUTF8(str string, origEncoding string) string {
+	strBytes := []byte(str)
+	byteReader := bytes.NewReader(strBytes)
+	reader, _ := charset.NewReaderLabel(origEncoding, byteReader)
+	strBytes, _ = ioutil.ReadAll(reader)
+	return string(strBytes)
 }
