@@ -79,8 +79,14 @@ func downloadPdfs(start int, end int) {
 
 				sql := `INSERT INTO certificate(id, type) VALUES(?, ?)
   ON CONFLICT(id) DO UPDATE SET type=excluded.type;`
-				statement, _ := db.Prepare(sql)
-				statement.Exec(i, contentType)
+				statement, err := db.Prepare(sql)
+				if err != nil {
+					log.Fatal(err)
+				}
+				_, err = statement.Exec(i, contentType)
+				if err != nil {
+					log.Fatal(err)
+				}
 
 				if contentType == "application/pdf" {
 					// create empty file
@@ -153,14 +159,6 @@ func convertToUTF8(str string, origEncoding string) string {
 }
 
 func initDb() {
-	fmt.Println("Creating sqlite.db...")
-	file, err := os.Create("sqlite.db")
-	if err != nil {
-		log.Fatal(err.Error())
-	}
-	file.Close()
-	fmt.Println("sqlite.db created")
-
 	db, _ := sql.Open("sqlite3", "./sqlite.db")
 	defer db.Close()
 	createTable(db)
@@ -170,7 +168,7 @@ func createTable(db *sql.DB) {
 	sql := `CREATE TABLE certificate (
 		"id" integer NOT NULL PRIMARY KEY,		
 		"name" TEXT,
-		"content" TEXT
+		"content" TEXT,
 		"type" TEXT
 	  );`
 
