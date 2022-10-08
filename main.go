@@ -23,15 +23,16 @@ import (
 )
 
 func main() {
+	initDb()
+	downloadPdfs(1, 10000)
+}
+
+func downloadPdfs(start int, end int) {
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
 
-	downloadPdfs(1, 10)
-}
-
-func downloadPdfs(start int, end int) {
 	pdfUrl := os.Getenv("URL")
 	fileURL, err := url.Parse(pdfUrl)
 	if err != nil {
@@ -52,15 +53,15 @@ func downloadPdfs(start int, end int) {
 
 		fmt.Printf("%d: ", i)
 
-		// skip downloaded files
-		if file != nil {
-			fmt.Println("Found PDF")
+		cert := getCertificate(db, i)
+		if cert != 0 {
+			fmt.Println("Found db entry")
 		} else {
 
-			cert := getCertificate(db, i)
-			if cert != 0 {
-				fmt.Println("Found db entry")
+			if file != nil {
+				fmt.Println("Found PDF")
 			} else {
+
 				urlValues.Set("ID", strconv.Itoa(i))
 				fileURL.RawQuery = urlValues.Encode()
 
@@ -77,16 +78,7 @@ func downloadPdfs(start int, end int) {
 				fmt.Println()
 				contentType := resp.Header["Content-Type"][0]
 
-				sql := `INSERT INTO certificate(id, type) VALUES(?, ?)
-  ON CONFLICT(id) DO UPDATE SET type=excluded.type;`
-				statement, err := db.Prepare(sql)
-				if err != nil {
-					log.Fatal(err)
-				}
-				_, err = statement.Exec(i, contentType)
-				if err != nil {
-					log.Fatal(err)
-				}
+				insertContentType(db, i, contentType)
 
 				if contentType == "application/pdf" {
 					// create empty file
@@ -121,7 +113,6 @@ func downloadPdfs(start int, end int) {
 			content = strings.Replace(content, name, "", 1)
 
 			insertCertificate(db, i, name, content)
-			getCertificate(db, i)
 		}
 	}
 }
@@ -161,18 +152,14 @@ func convertToUTF8(str string, origEncoding string) string {
 func initDb() {
 	db, _ := sql.Open("sqlite3", "./sqlite.db")
 	defer db.Close()
-	createTable(db)
-}
 
-func createTable(db *sql.DB) {
-	sql := `CREATE TABLE certificate (
+	sql := `CREATE TABLE IF NOT EXISTS certificate (
 		"id" integer NOT NULL PRIMARY KEY,		
 		"name" TEXT,
 		"content" TEXT,
 		"type" TEXT
 	  );`
 
-	fmt.Println("Create certificate table...")
 	statement, err := db.Prepare(sql)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -205,4 +192,11 @@ func getCertificate(db *sql.DB, id int) int {
 		return 0
 	}
 	return 1
+}
+
+func insertContentType(db *sql.DB, i int, contentType string) {
+	sql := `INSERT INTO certificate(id, type) VALUES(?, ?)
+  ON CONFLICT(id) DO UPDATE SET type=excluded.type;`
+	statement, _ := db.Prepare(sql)
+	statement.Exec(i, contentType)
 }
